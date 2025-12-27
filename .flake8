@@ -1,0 +1,14 @@
+[flake8]
+exclude = 
+    .venv,
+    __pycache__,
+    docs/source/conf.py,
+    .git,
+    migrations,
+    old
+    build,
+    dist
+
+max-line-length = 88
+extend-ignore = E203
+max-complexity = 10
