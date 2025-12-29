@@ -7,6 +7,8 @@ from rest_framework.test import APIClient
 from .models import GeoPoint, PointMessage
 from .serializers import GeoPointSerializer, PointMessageSerializer
 
+# ---------------- 🍰🍰🍰 POST /api/points/ 🍰🍰🍰 ------------------
+
 
 class GeoPointCreateTests(TestCase):
     """Tests for GeoPoint creation endpoint"""
@@ -59,6 +61,9 @@ class GeoPointCreateTests(TestCase):
             [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
         )
         self.assertEqual(GeoPoint.objects.count(), 0)
+
+
+# ---------------- 🍰🍰🍰 POST /api/points/messages/ 🍰🍰🍰 ------------------
 
 
 class PointMessageCreateTests(TestCase):
@@ -151,6 +156,141 @@ class PointMessageCreateTests(TestCase):
             [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
         )
         self.assertEqual(PointMessage.objects.count(), 0)
+
+
+# ---------------- 🍰🍰🍰 GET /api/points/search/ 🍰🍰🍰 ------------------
+
+
+class GeoPointSearchTests(TestCase):
+    """Tests for GeoPoint search within radius"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+        self.client.force_authenticate(user=self.user)
+
+        # Make sure we have some points
+        self.point_moscow = GeoPoint.objects.create(
+            name="Moscow Kremlin",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [37.6173, 55.7558]}',
+            created_by=self.user,
+        )
+
+        self.point_spb = GeoPoint.objects.create(
+            name="St. Petersburg",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [30.3141, 59.9398]}',
+            created_by=self.user,
+        )
+
+        # Point nearby Moscow
+        self.point_zelenograd = GeoPoint.objects.create(
+            name="Zelenograd",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [37.1818, 55.9825]}',
+            created_by=self.user,
+        )
+
+    def test_search_with_all_parameters(self):
+        """Test search with all required parameters"""
+        url = reverse("point-search")
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 5}  # 5 km
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("points", response.data)
+        self.assertIn("radius_km", response.data)
+        self.assertEqual(response.data["radius_km"], 5)
+
+    def test_search_finds_nearby_points(self):
+        """Test that search finds points within radius"""
+        url = reverse("point-search")
+
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 50}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Should find both Moscow and Zelenograd
+        points_found = response.data["points_found"]
+        point_names = [p["name"] for p in response.data["points"]]
+
+        self.assertEqual(points_found, 2)
+        self.assertIn("Moscow Kremlin", point_names)
+        self.assertIn("Zelenograd", point_names)
+        self.assertNotIn("St. Petersburg", point_names)  # Outside radius
+
+    def test_search_missing_parameters(self):
+        """Test search without required parameters"""
+        url = reverse("point-search")
+
+        # Missing parameters
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("Missing", response.data["error"])
+
+    def test_search_invalid_latitude(self):
+        """Test search with invalid latitude"""
+        url = reverse("point-search")
+
+        response = self.client.get(
+            url, {"latitude": 200, "longitude": 37.6173, "radius": 10}  # Wrong latitude
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("Latitude", response.data["error"])
+
+    def test_search_invalid_longitude(self):
+        """Test search with invalid longitude"""
+        url = reverse("point-search")
+
+        response = self.client.get(
+            url,
+            {"latitude": 55.7558, "longitude": 200, "radius": 10},  # Wrong longitude
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("Longitude", response.data["error"])
+
+    def test_search_negative_radius(self):
+        """Test search with negative radius"""
+        url = reverse("point-search")
+
+        response = self.client.get(
+            url,
+            {
+                "latitude": 55.7558,
+                "longitude": 37.6173,
+                "radius": -10,  # Negative radius
+            },
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("positive", response.data["error"].lower())
+
+    def test_search_unauthenticated(self):
+        """Test that search requires authentication"""
+        client = APIClient()  # No authentication
+        url = reverse("point-search")
+
+        response = client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 10}
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
+        )
 
 
 # ------------------ 🍰🍰🍰 MODELS (__str__) 🍰🍰🍰 ------------------
