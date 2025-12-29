@@ -293,6 +293,160 @@ class GeoPointSearchTests(TestCase):
         )
 
 
+# ------------- 🍰🍰🍰 GET /api/points/messages/search/... 🍰🍰🍰 ---------------
+
+
+class PointMessageSearchTests(TestCase):
+    """Tests for PointMessage search within radius"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+        self.client.force_authenticate(user=self.user)
+
+        # Make sure we have some points
+        self.point_moscow = GeoPoint.objects.create(
+            name="Moscow Point",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [37.6173, 55.7558]}',
+            created_by=self.user,
+        )
+
+        self.point_zelenograd = GeoPoint.objects.create(
+            name="Zelenograd Point",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [37.1818, 55.9825]}',
+            created_by=self.user,
+        )
+
+        self.point_spb = GeoPoint.objects.create(
+            name="SPB Point",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [30.3141, 59.9398]}',
+            created_by=self.user,
+        )
+
+        # Create some messages
+        self.message_moscow = PointMessage.objects.create(
+            point=self.point_moscow, user=self.user, text="Message in Moscow"
+        )
+
+        self.message_zelenograd = PointMessage.objects.create(
+            point=self.point_zelenograd, user=self.user, text="Message in Zelenograd"
+        )
+
+        self.message_spb = PointMessage.objects.create(
+            point=self.point_spb, user=self.user, text="Message in SPB"
+        )
+
+    def test_search_messages_with_valid_parameters(self):
+        """Test message search with all required parameters"""
+        url = reverse("message-search")
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 5}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("messages", response.data)
+        self.assertEqual(response.data["radius_km"], 5)
+
+    def test_search_messages_finds_within_radius(self):
+        """Test that search finds messages whose points are within radius"""
+        url = reverse("message-search")
+
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 40}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        # Should find both messages Moscow and Zelenograd
+        messages_found = response.data["messages_found"]
+        message_texts = [m["text"] for m in response.data["messages"]]
+
+        self.assertEqual(messages_found, 2)
+        self.assertIn("Message in Moscow", message_texts)
+        self.assertIn("Message in Zelenograd", message_texts)
+        self.assertNotIn("Message in SPB", message_texts)  # Not within radius
+
+    def test_search_messages_missing_parameters(self):
+        """Test message search without required parameters"""
+        url = reverse("message-search")
+
+        response = self.client.get(url)  # No parameters
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+
+    def test_search_messages_invalid_coordinates(self):
+        """Test message search with invalid coordinates"""
+        url = reverse("message-search")
+
+        response = self.client.get(
+            url, {"latitude": 200, "longitude": 37.6173, "radius": 10}  # Invalid
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+
+    def test_search_messages_negative_radius(self):
+        """Test message search with negative radius"""
+        url = reverse("message-search")
+
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": -10}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+
+    def test_search_messages_unauthenticated(self):
+        """Test that message search requires authentication"""
+        client = APIClient()  # No authentication
+        url = reverse("message-search")
+
+        response = client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 10}
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
+        )
+
+    def test_search_returns_message_structure(self):
+        """Test that search returns correct message structure"""
+        url = reverse("message-search")
+
+        response = self.client.get(
+            url, {"latitude": 55.7558, "longitude": 37.6173, "radius": 5}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        if response.data["messages_found"] > 0:
+            message = response.data["messages"][0]
+
+            # Проверяем структуру ответа
+            self.assertIn("id", message)
+            self.assertIn("text", message)
+            self.assertIn("created_at", message)
+            self.assertIn("distance_km", message)
+            self.assertIn("point", message)
+            self.assertIn("user", message)
+
+            # Проверяем структуру точки
+            self.assertIn("id", message["point"])
+            self.assertIn("name", message["point"])
+            self.assertIn("coordinates", message["point"])
+
+            # Проверяем структуру пользователя
+            self.assertIn("id", message["user"])
+            self.assertIn("username", message["user"])
+
+
 # ------------------ 🍰🍰🍰 MODELS (__str__) 🍰🍰🍰 ------------------
 
 
