@@ -72,13 +72,13 @@ class GeoPointSerializer(serializers.ModelSerializer):
 class PointMessageSerializer(serializers.ModelSerializer):
     """Serializer for point messages"""
 
-    def validate_point(self, value):
-        """
-        Check that the point exists
-        """
-        if not GeoPoint.objects.filter(id=value.id).exists():
-            raise serializers.ValidationError("Point does not exist")
-        return value
+    point = serializers.PrimaryKeyRelatedField(
+        queryset=GeoPoint.objects.all(),
+        error_messages={
+            "does_not_exist": "Point does not exist. Please provide a valid point ID.",
+            "incorrect_type": "Point ID must be an integer.",
+        },
+    )
 
     class Meta:
         model = PointMessage
