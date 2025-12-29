@@ -1,3 +1,403 @@
 from django.test import TestCase
+from django.contrib.auth.models import User
+from django.urls import reverse
+import json
+from rest_framework import status
+from rest_framework.test import APIClient
+from .models import GeoPoint, PointMessage
+from .serializers import GeoPointSerializer, PointMessageSerializer
 
-# Create your tests here.
+
+class GeoPointCreateTests(TestCase):
+    """Tests for GeoPoint creation endpoint"""
+
+    def setUp(self):
+        """Setup test data"""
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.valid_data = {
+            "name": "Test Point",
+            "description": "Test Description",
+            "coordinates": {
+                "type": "Point",
+                "coordinates": [37.6173, 55.7558],  # Москва
+            },
+        }
+
+    def test_create_point_with_valid_data(self):
+        """Test creating a point with valid data"""
+        url = reverse("point-create")
+        response = self.client.post(
+            url, data=json.dumps(self.valid_data), content_type="application/json"
+        )
+
+        # Check response
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        # Check database
+        self.assertEqual(GeoPoint.objects.count(), 1)
+
+        point = GeoPoint.objects.first()
+        self.assertEqual(point.name, self.valid_data["name"])
+        self.assertEqual(point.created_by, self.user)
+
+    def test_create_point_unauthenticated(self):
+        """Test that unauthenticated user cannot create points"""
+        client = APIClient()  # New unauthenticated client
+        url = reverse("point-create")
+
+        response = client.post(
+            url, data=json.dumps(self.valid_data), content_type="application/json"
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
+        )
+        self.assertEqual(GeoPoint.objects.count(), 0)
+
+
+class PointMessageCreateTests(TestCase):
+    """Tests for PointMessage creation endpoint"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.point = GeoPoint.objects.create(
+            name="Test Point",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [0, 0]}',
+            created_by=self.user,
+        )
+
+    def test_create_message_for_existing_point(self):
+        """Test creating a message for existing point"""
+        url = reverse("message-create")
+        data = {"point": self.point.id, "text": "Test message"}
+
+        response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(PointMessage.objects.count(), 1)
+
+        message = PointMessage.objects.first()
+        self.assertEqual(message.text, data["text"])
+        self.assertEqual(message.user, self.user)
+
+    def test_create_message_empty_text(self):
+        """Test creating a message with empty text should fail"""
+        url = reverse("message-create")
+        data = {"point": self.point.id, "text": ""}  # Empty text!
+
+        response = self.client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("text", response.data)
+
+    def test_create_point_without_name(self):
+        """Test creating a point without name should fail"""
+        url = reverse("point-create")
+        invalid_data = {
+            # No name!
+            "coordinates": {"type": "Point", "coordinates": [0, 0]}
+        }
+
+        response = self.client.post(
+            url, data=json.dumps(invalid_data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("name", response.data)
+
+    def test_create_point_with_long_name(self):
+        """Test creating a point with name longer than 255 chars should fail"""
+        url = reverse("point-create")
+        invalid_data = {
+            "name": "A" * 256,  # 256 chars > 255 limit
+            "coordinates": {"type": "Point", "coordinates": [0, 0]},
+        }
+
+        response = self.client.post(
+            url, data=json.dumps(invalid_data), content_type="application/json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("name", response.data)
+
+    def test_create_message_unauthenticated(self):
+        """Test that unauthenticated user cannot create messages"""
+        client = APIClient()  # Unauthenticated client
+        url = reverse("message-create")
+        data = {"point": self.point.id, "text": "Test message"}
+
+        response = client.post(
+            url, data=json.dumps(data), content_type="application/json"
+        )
+
+        self.assertIn(
+            response.status_code,
+            [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN],
+        )
+        self.assertEqual(PointMessage.objects.count(), 0)
+
+
+# ------------------ 🍰🍰🍰 MODELS (__str__) 🍰🍰🍰 ------------------
+
+
+class ModelsTests(TestCase):
+    """Tests for model methods (__str__, etc.)"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+
+        self.point = GeoPoint.objects.create(
+            name="Test Location",
+            description="Test description",
+            coordinates='{"type": "Point", "coordinates": [0, 0]}',
+            created_by=self.user,
+        )
+
+    def test_geopoint_str(self):
+        """Test GeoPoint __str__ method"""
+        self.assertEqual(str(self.point), "Test Location")
+
+    def test_pointmessage_str(self):
+        """Test PointMessage __str__ method"""
+        message = PointMessage.objects.create(
+            point=self.point, user=self.user, text="Test message text"
+        )
+
+        expected = f"Message by {self.user.username} for {self.point.name}"
+        self.assertEqual(str(message), expected)
+
+
+# ------------------ 🍰🍰🍰 SERIALIZERS 🍰🍰🍰 ------------------
+
+
+class GeoPointSerializerTests(TestCase):
+    """Tests for GeoPointSerializer validation"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+
+    def test_valid_coordinates(self):
+        """Test valid GeoJSON coordinates"""
+
+        valid_data = {
+            "name": "Test Point",
+            "description": "Test description",
+            "coordinates": {
+                "type": "Point",
+                "coordinates": [37.6173, 55.7558],  # Valid coordinates
+            },
+        }
+
+        serializer = GeoPointSerializer(data=valid_data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_coordinates_not_dict(self):
+        """Test coordinates that are not a dictionary"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": "not a dict",  # String instead of dict
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("JSON object", str(serializer.errors["coordinates"]))
+
+    def test_missing_type_field(self):
+        """Test GeoJSON missing 'type' field"""
+        from .serializers import GeoPointSerializer
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {"coordinates": [10, 20]},  # Missing 'type'
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+
+    def test_missing_coordinates_field(self):
+        """Test GeoJSON missing 'coordinates' field"""
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {"type": "Point"},  # Missing 'coordinates'
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn(
+            "Missing 'coordinates' field", str(serializer.errors["coordinates"])
+        )
+
+    def test_wrong_geojson_type(self):
+        """Test GeoJSON with wrong type (not 'Point')"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {
+                "type": "Polygon",  # Wrong type
+                "coordinates": [[[0, 0], [1, 1]]],
+            },
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("Point", str(serializer.errors["coordinates"]))
+
+    def test_coordinates_not_array(self):
+        """Test coordinates field is not an array"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {
+                "type": "Point",
+                "coordinates": "not an array",  # String instead of array
+            },
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("array", str(serializer.errors["coordinates"]))
+
+    def test_coordinates_wrong_length(self):
+        """Test coordinates array with wrong number of elements"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {"type": "Point", "coordinates": [10]},  # Only one element
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("exactly 2 values", str(serializer.errors["coordinates"]))
+
+    def test_coordinates_not_numbers(self):
+        """Test coordinates that are not numbers"""
+        test_cases = [
+            {
+                "coordinates": {
+                    "type": "Point",
+                    "coordinates": ["not-a-number", 50],  # lon is string
+                }
+            },
+            {
+                "coordinates": {
+                    "type": "Point",
+                    "coordinates": [50, "not-a-number"],  # lat is string
+                }
+            },
+            {
+                "coordinates": {
+                    "type": "Point",
+                    "coordinates": [None, 50],  # lon is None
+                }
+            },
+            {"coordinates": {"type": "Point", "coordinates": [50, []]}},  # lat is list
+        ]
+
+        for data in test_cases:
+            full_data = {"name": "Test Point", **data}
+            serializer = GeoPointSerializer(data=full_data)
+            self.assertFalse(serializer.is_valid(), f"Should fail for {data}")
+            self.assertIn("coordinates", serializer.errors)
+            self.assertIn("must be numbers", str(serializer.errors["coordinates"]))
+
+    def test_invalid_longitude(self):
+        """Test longitude out of range"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {
+                "type": "Point",
+                "coordinates": [200, 50],  # Longitude > 180
+            },
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("between -180 and 180", str(serializer.errors["coordinates"]))
+
+    def test_invalid_latitude(self):
+        """Test latitude out of range"""
+
+        invalid_data = {
+            "name": "Test",
+            "coordinates": {"type": "Point", "coordinates": [50, 100]},  # Latitude > 90
+        }
+
+        serializer = GeoPointSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("coordinates", serializer.errors)
+        self.assertIn("between -90 and 90", str(serializer.errors["coordinates"]))
+
+
+class PointMessageSerializerTests(TestCase):
+    """Tests for PointMessageSerializer validation"""
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="testuser", password="testpass123"
+        )
+        self.point = GeoPoint.objects.create(
+            name="Test Point",
+            description="Test",
+            coordinates='{"type": "Point", "coordinates": [0, 0]}',
+            created_by=self.user,
+        )
+
+    def test_valid_message(self):
+        """Test creating a valid message"""
+
+        valid_data = {"point": self.point.id, "text": "Test message"}
+
+        serializer = PointMessageSerializer(data=valid_data)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_nonexistent_point(self):
+        """Test message for non-existent point"""
+
+        invalid_data = {"point": 99999, "text": "Test message"}  # Non-existent ID
+
+        serializer = PointMessageSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("point", serializer.errors)
+        self.assertIn("Point does not exist", str(serializer.errors["point"]))
+
+    def test_invalid_point_type(self):
+        """Test point field with wrong type (not integer)"""
+
+        invalid_data = {
+            "point": "not-an-integer",  # String instead of integer
+            "text": "Test message",
+        }
+
+        serializer = PointMessageSerializer(data=invalid_data)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("point", serializer.errors)
+        self.assertIn("integer", str(serializer.errors["point"]))
