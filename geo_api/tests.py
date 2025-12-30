@@ -225,6 +225,19 @@ class GeoPointSearchTests(TestCase):
         self.assertIn("Zelenograd", point_names)
         self.assertNotIn("St. Petersburg", point_names)  # Outside radius
 
+    def test_search_non_numeric_parameters(self):
+        """Test search with non-numeric parameters"""
+        url = reverse("point-search")
+
+        # latitude not a number
+        response = self.client.get(
+            url, {"latitude": "not-a-number", "longitude": 37.6173, "radius": 10}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("valid numbers", response.data["error"])
+
     def test_search_missing_parameters(self):
         """Test search without required parameters"""
         url = reverse("point-search")
@@ -371,6 +384,19 @@ class PointMessageSearchTests(TestCase):
         self.assertIn("Message in Zelenograd", message_texts)
         self.assertNotIn("Message in SPB", message_texts)  # Not within radius
 
+    def test_search_messages_non_numeric_parameters(self):
+        """Test message search with non-numeric parameters"""
+        url = reverse("message-search")
+
+        # latitude not a number
+        response = self.client.get(
+            url, {"latitude": "invalid", "longitude": 37.6173, "radius": 10}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("valid numbers", response.data["error"])
+
     def test_search_messages_missing_parameters(self):
         """Test message search without required parameters"""
         url = reverse("message-search")
@@ -380,16 +406,30 @@ class PointMessageSearchTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
 
-    def test_search_messages_invalid_coordinates(self):
+    def test_search_messages_invalid_latitude(self):
         """Test message search with invalid coordinates"""
         url = reverse("message-search")
 
         response = self.client.get(
-            url, {"latitude": 200, "longitude": 37.6173, "radius": 10}  # Invalid
+            url, {"latitude": 200, "longitude": 37.6173, "radius": 10}  # Wrong latitude
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("error", response.data)
+        self.assertIn("Latitude", response.data["error"])
+
+    def test_search_messages_invalid_longitude(self):
+        """Test search with invalid longitude"""
+        url = reverse("message-search")
+
+        response = self.client.get(
+            url,
+            {"latitude": 55.7558, "longitude": 200, "radius": 10},  # Wrong longitude
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", response.data)
+        self.assertIn("Longitude", response.data["error"])
 
     def test_search_messages_negative_radius(self):
         """Test message search with negative radius"""
